@@ -5,6 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "build": "npm install && npm run updatedb",
+    "updatedb": "node node_modules/geoip-lite/scripts/updatedb.js",
     "dev": "nodemon server.js"
   },
   "dependencies": {
