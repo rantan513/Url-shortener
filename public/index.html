@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Link Shortener</title>
   <style>
-    :root { --bg:#fafafa; --card:#fff; --border:#e5e5e5; --text:#111; --text2:#555; --text3:#888; --blue:#2563eb; }
+    :root { --bg:#fafafa; --card:#fff; --border:#e5e5e5; --text:#111; --text2:#555; --text3:#888; --blue:#2563eb; --red:#dc2626; }
     * { box-sizing:border-box; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
     body { margin:0; background:var(--bg); color:var(--text); padding:24px; }
-    .wrap { max-width:900px; margin:0 auto; }
+    .wrap { max-width:1000px; margin:0 auto; }
     h1 { font-size:22px; font-weight:600; margin:0 0 20px; }
     .create { display:flex; gap:8px; margin-bottom:20px; flex-wrap:wrap; }
     input { padding:10px 14px; border:1px solid var(--border); border-radius:8px; font-size:14px; outline:none; }
@@ -26,9 +26,10 @@
     .slug a { color:var(--blue); text-decoration:none; }
     .slug a:hover { text-decoration:underline; }
     .name { font-weight:500; }
-    .dest { color:var(--text2); font-size:13px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .dest { color:var(--text2); font-size:13px; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .count { font-variant-numeric:tabular-nums; font-weight:500; }
     .btn-sm { padding:4px 10px; font-size:12px; background:var(--blue); }
+    .btn-del { padding:4px 10px; font-size:12px; background:var(--red); margin-left:4px; }
     .analytics { display:none; margin-top:16px; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:20px; }
     .analytics h3 { margin:0 0 16px; font-size:16px; }
     .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
@@ -42,11 +43,19 @@
     .tag { display:inline-block; padding:2px 6px; border-radius:4px; font-size:11px; background:#e0e7ff; color:var(--blue); font-family:ui-monospace,SFMono-Regular,monospace; }
     .close { float:right; background:transparent; color:var(--text); padding:4px 10px; font-size:12px; border:1px solid var(--border); }
     .empty { color:var(--text3); font-size:13px; padding:8px 0; }
+    .stats-row { display:flex; gap:16px; margin-bottom:16px; }
+    .stat-box { flex:1; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; }
+    .stat-box h4 { margin:0 0 4px; font-size:12px; color:var(--text3); font-weight:400; text-transform:uppercase; }
+    .stat-box .num { font-size:28px; font-weight:600; font-variant-numeric:tabular-nums; }
+    .stat-box .sub { font-size:12px; color:var(--text2); margin-top:2px; }
+    .human { color:var(--blue); }
+    .blocked { color:var(--red); }
     @media (max-width:640px) {
       .create { flex-direction:column; }
       input[type="url"], input[type="text"] { flex:none; width:100%; }
       .grid2 { grid-template-columns:1fr; }
       .dest { max-width:120px; }
+      .stats-row { flex-direction:column; }
     }
   </style>
 </head>
@@ -64,7 +73,7 @@
     <div class="links">
       <table>
         <thead>
-          <tr><th>Name</th><th>Short URL</th><th>Destination</th><th>Clicks</th><th></th></tr>
+          <tr><th>Name</th><th>Short URL</th><th>Destination</th><th>Human Clicks</th><th>Blocked</th><th></th></tr>
         </thead>
         <tbody id="tbody"></tbody>
       </table>
@@ -73,6 +82,20 @@
     <div class="analytics" id="analytics">
       <button class="close" onclick="closeAnalytics()">Close</button>
       <h3 id="analTitle">Analytics</h3>
+
+      <div class="stats-row">
+        <div class="stat-box">
+          <h4>Human clicks</h4>
+          <div class="num human" id="statHuman">0</div>
+          <div class="sub">Real people only</div>
+        </div>
+        <div class="stat-box">
+          <h4>Bots blocked</h4>
+          <div class="num blocked" id="statBots">0</div>
+          <div class="sub">Social previews & crawlers</div>
+        </div>
+      </div>
+
       <div class="grid2">
         <div>
           <h4 style="margin:0 0 10px;font-size:13px;color:var(--text3);">Top states</h4>
@@ -94,7 +117,7 @@
         </div>
       </div>
       <div class="recent">
-        <h4 style="margin:16px 0 10px;font-size:13px;color:var(--text3);">Recent clicks</h4>
+        <h4 style="margin:16px 0 10px;font-size:13px;color:var(--text3);">Recent clicks (humans only)</h4>
         <table>
           <thead>
             <tr><th>Time</th><th>City, State</th><th>Device</th><th>Browser</th><th>IP</th></tr>
@@ -140,7 +163,7 @@
       const links = await res.json();
       const tbody = document.getElementById('tbody');
       if (!links.length) {
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:24px;">No links yet. Create one above!</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:24px;">No links yet. Create one above!</td></tr>';
         return;
       }
       tbody.innerHTML = links.map(l => `
@@ -149,7 +172,11 @@
           <td class="slug"><a href="/${l.slug}" target="_blank">/${l.slug}</a></td>
           <td class="dest" title="${l.destination}">${l.destination}</td>
           <td class="count">${l.clicks}</td>
-          <td><button class="btn-sm" onclick="showAnalytics('${l.slug}', '${l.name || l.slug}')">Stats</button></td>
+          <td style="color:var(--red);font-size:13px;">${l.botBlocks || 0}</td>
+          <td>
+            <button class="btn-sm" onclick="showAnalytics('${l.slug}', '${l.name || l.slug}')">Stats</button>
+            <button class="btn-del" onclick="deleteLink('${l.slug}')">Delete</button>
+          </td>
         </tr>
       `).join('');
     }
@@ -158,9 +185,7 @@
       const dest = document.getElementById('dest').value.trim();
       const name = document.getElementById('name').value.trim();
       const slug = document.getElementById('slug').value.trim();
-
       if (!dest) return alert('Please enter a URL');
-
       const res = await fetch(`${API}/api/links`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -168,12 +193,19 @@
       });
       const data = await res.json();
       if (!res.ok) return alert(data.error || 'Something went wrong');
-
       document.getElementById('dest').value = '';
       document.getElementById('name').value = '';
       document.getElementById('slug').value = '';
       load();
       alert(`Short link created: ${data.shortUrl}`);
+    }
+
+    async function deleteLink(slug) {
+      if (!confirm('Delete this link forever?')) return;
+      const res = await fetch(`${API}/api/links/${slug}`, { method: 'DELETE' });
+      if (!res.ok) return alert('Failed to delete');
+      load();
+      closeAnalytics();
     }
 
     async function showAnalytics(slug, name) {
@@ -182,6 +214,8 @@
       if (!res.ok) return alert(data.error || 'Link not found');
 
       document.getElementById('analTitle').textContent = `Analytics: ${name}`;
+      document.getElementById('statHuman').textContent = data.totalClicks;
+      document.getElementById('statBots').textContent = data.botBlocks || 0;
       document.getElementById('analytics').style.display = 'block';
 
       renderBar(data.topStates, 'states');
@@ -207,7 +241,6 @@
       document.getElementById('analytics').style.display = 'none';
     }
 
-    // Allow Enter key to create
     document.querySelectorAll('.create input').forEach(inp => {
       inp.addEventListener('keypress', e => { if (e.key === 'Enter') create(); });
     });
