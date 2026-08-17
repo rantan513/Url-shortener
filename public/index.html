@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Link Shortener</title>
+  <style>
+    :root { --bg:#fafafa; --card:#fff; --border:#e5e5e5; --text:#111; --text2:#555; --text3:#888; --blue:#2563eb; }
+    * { box-sizing:border-box; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
+    body { margin:0; background:var(--bg); color:var(--text); padding:24px; }
+    .wrap { max-width:900px; margin:0 auto; }
+    h1 { font-size:22px; font-weight:600; margin:0 0 20px; }
+    .create { display:flex; gap:8px; margin-bottom:20px; flex-wrap:wrap; }
+    input { padding:10px 14px; border:1px solid var(--border); border-radius:8px; font-size:14px; outline:none; }
+    input:focus { border-color:var(--blue); }
+    input[type="url"] { flex:2; min-width:200px; }
+    input[type="text"] { flex:1; min-width:120px; }
+    button { padding:10px 20px; background:var(--text); color:#fff; border:none; border-radius:8px; font-size:14px; cursor:pointer; font-weight:500; }
+    button:hover { opacity:.85; }
+    .links { background:var(--card); border:1px solid var(--border); border-radius:10px; overflow:hidden; }
+    table { width:100%; border-collapse:collapse; font-size:14px; }
+    th { text-align:left; padding:12px 16px; color:var(--text3); font-weight:400; border-bottom:1px solid var(--border); background:#fafafa; }
+    td { padding:12px 16px; border-bottom:1px solid var(--border); }
+    tr:hover { background:rgba(0,0,0,.02); }
+    .slug { font-family:ui-monospace,SFMono-Regular,monospace; font-size:13px; }
+    .slug a { color:var(--blue); text-decoration:none; }
+    .slug a:hover { text-decoration:underline; }
+    .name { font-weight:500; }
+    .dest { color:var(--text2); font-size:13px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .count { font-variant-numeric:tabular-nums; font-weight:500; }
+    .btn-sm { padding:4px 10px; font-size:12px; background:var(--blue); }
+    .analytics { display:none; margin-top:16px; background:var(--card); border:1px solid var(--border); border-radius:10px; padding:20px; }
+    .analytics h3 { margin:0 0 16px; font-size:16px; }
+    .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    .bar { display:flex; align-items:center; gap:8px; margin-bottom:6px; font-size:13px; }
+    .bar-label { width:90px; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .bar-track { flex:1; height:6px; background:var(--border); border-radius:3px; overflow:hidden; }
+    .bar-fill { height:100%; background:var(--blue); border-radius:3px; }
+    .bar-pct { width:32px; text-align:right; color:var(--text3); font-size:12px; }
+    .recent { margin-top:16px; overflow-x:auto; }
+    .recent table { font-size:13px; min-width:600px; }
+    .tag { display:inline-block; padding:2px 6px; border-radius:4px; font-size:11px; background:#e0e7ff; color:var(--blue); font-family:ui-monospace,SFMono-Regular,monospace; }
+    .close { float:right; background:transparent; color:var(--text); padding:4px 10px; font-size:12px; border:1px solid var(--border); }
+    .empty { color:var(--text3); font-size:13px; padding:8px 0; }
+    @media (max-width:640px) {
+      .create { flex-direction:column; }
+      input[type="url"], input[type="text"] { flex:none; width:100%; }
+      .grid2 { grid-template-columns:1fr; }
+      .dest { max-width:120px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>🔗 Link Shortener</h1>
+
+    <div class="create">
+      <input type="url" id="dest" placeholder="Paste long URL (https://...)" />
+      <input type="text" id="name" placeholder="Link name (e.g. Summer Sale)" />
+      <input type="text" id="slug" placeholder="Custom slug (optional)" />
+      <button onclick="create()">Create</button>
+    </div>
+
+    <div class="links">
+      <table>
+        <thead>
+          <tr><th>Name</th><th>Short URL</th><th>Destination</th><th>Clicks</th><th></th></tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+
+    <div class="analytics" id="analytics">
+      <button class="close" onclick="closeAnalytics()">Close</button>
+      <h3 id="analTitle">Analytics</h3>
+      <div class="grid2">
+        <div>
+          <h4 style="margin:0 0 10px;font-size:13px;color:var(--text3);">Top states</h4>
+          <div id="states"></div>
+        </div>
+        <div>
+          <h4 style="margin:0 0 10px;font-size:13px;color:var(--text3);">Top browsers</h4>
+          <div id="browsers"></div>
+        </div>
+      </div>
+      <div class="grid2" style="margin-top:16px;">
+        <div>
+          <h4 style="margin:0 0 10px;font-size:13px;color:var(--text3);">Top cities</h4>
+          <div id="cities"></div>
+        </div>
+        <div>
+          <h4 style="margin:0 0 10px;font-size:13px;color:var(--text3);">Devices</h4>
+          <div id="devices"></div>
+        </div>
+      </div>
+      <div class="recent">
+        <h4 style="margin:16px 0 10px;font-size:13px;color:var(--text3);">Recent clicks</h4>
+        <table>
+          <thead>
+            <tr><th>Time</th><th>City, State</th><th>Device</th><th>Browser</th><th>IP</th></tr>
+          </thead>
+          <tbody id="recentBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = '';
+
+    function renderBar(data, id) {
+      const el = document.getElementById(id);
+      if (!data || !data.length) { el.innerHTML = '<p class="empty">No data yet</p>'; return; }
+      const max = Math.max(...data.map(d => d[1]));
+      el.innerHTML = data.map(([label, count]) => `
+        <div class="bar">
+          <div class="bar-label" title="${label}">${label}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${(count / max) * 100}%"></div></div>
+          <div class="bar-pct">${count}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderDevice(data, id) {
+      const el = document.getElementById(id);
+      if (!data || !Object.keys(data).length) { el.innerHTML = '<p class="empty">No data yet</p>'; return; }
+      const arr = Object.entries(data).sort((a, b) => b[1] - a[1]);
+      const max = Math.max(...arr.map(d => d[1]));
+      el.innerHTML = arr.map(([label, count]) => `
+        <div class="bar">
+          <div class="bar-label">${label}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${(count / max) * 100}%"></div></div>
+          <div class="bar-pct">${count}</div>
+        </div>
+      `).join('');
+    }
+
+    async function load() {
+      const res = await fetch(`${API}/api/links`);
+      const links = await res.json();
+      const tbody = document.getElementById('tbody');
+      if (!links.length) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text3);padding:24px;">No links yet. Create one above!</td></tr>';
+        return;
+      }
+      tbody.innerHTML = links.map(l => `
+        <tr>
+          <td class="name">${l.name || '-'}</td>
+          <td class="slug"><a href="/${l.slug}" target="_blank">/${l.slug}</a></td>
+          <td class="dest" title="${l.destination}">${l.destination}</td>
+          <td class="count">${l.clicks}</td>
+          <td><button class="btn-sm" onclick="showAnalytics('${l.slug}', '${l.name || l.slug}')">Stats</button></td>
+        </tr>
+      `).join('');
+    }
+
+    async function create() {
+      const dest = document.getElementById('dest').value.trim();
+      const name = document.getElementById('name').value.trim();
+      const slug = document.getElementById('slug').value.trim();
+
+      if (!dest) return alert('Please enter a URL');
+
+      const res = await fetch(`${API}/api/links`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ destination: dest, name, customSlug: slug })
+      });
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || 'Something went wrong');
+
+      document.getElementById('dest').value = '';
+      document.getElementById('name').value = '';
+      document.getElementById('slug').value = '';
+      load();
+      alert(`Short link created: ${data.shortUrl}`);
+    }
+
+    async function showAnalytics(slug, name) {
+      const res = await fetch(`${API}/api/links/${slug}/analytics`);
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || 'Link not found');
+
+      document.getElementById('analTitle').textContent = `Analytics: ${name}`;
+      document.getElementById('analytics').style.display = 'block';
+
+      renderBar(data.topStates, 'states');
+      renderBar(data.topCities, 'cities');
+      renderBar(Object.entries(data.browserBreakdown).sort((a, b) => b[1] - a[1]), 'browsers');
+      renderDevice(data.deviceBreakdown, 'devices');
+
+      const recent = data.recentClicks || [];
+      document.getElementById('recentBody').innerHTML = recent.slice(0, 20).map(c => `
+        <tr>
+          <td>${new Date(c.timestamp).toLocaleString()}</td>
+          <td>${c.city}, ${c.state}</td>
+          <td>${c.device}</td>
+          <td>${c.browser}</td>
+          <td><span class="tag">${c.ip}</span></td>
+        </tr>
+      `).join('') || '<tr><td colspan="5" class="empty">No clicks yet</td></tr>';
+
+      window.scrollTo({ top: document.getElementById('analytics').offsetTop - 20, behavior: 'smooth' });
+    }
+
+    function closeAnalytics() {
+      document.getElementById('analytics').style.display = 'none';
+    }
+
+    // Allow Enter key to create
+    document.querySelectorAll('.create input').forEach(inp => {
+      inp.addEventListener('keypress', e => { if (e.key === 'Enter') create(); });
+    });
+
+    load();
+  </script>
+</body>
+</html>
