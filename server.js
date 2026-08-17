@@ -21,35 +21,46 @@ mongoose.connect(MONGODB_URI)
   .then(() => console.log('MongoDB connected'))
   .catch(err => console.error('MongoDB error:', err));
 
-// ==================== BOT DETECTION (POSITIVE ID ONLY) ====================
-// ONLY block requests that positively identify as bots/crawlers.
-// Do NOT block based on missing headers — mobile browsers from SMS often lack them.
+// ==================== BOT DETECTION (FIXED) ====================
+// ONLY block requests with KNOWN bot user-agents.
+// Removed 'moz' (matches Mozilla in every browser) and 'bot' (too broad).
 
 const BOT_SIGNATURES = [
-  'bot', 'crawler', 'spider', 'slurp',
   'facebookexternalhit', 'twitterbot', 'linkedinbot',
-  'telegrambot', 'whatsapp', 'slackbot', 'discordbot',
-  'googlebot', 'bingbot', 'yandex', 'baidu', 'duckduckbot',
-  'curl', 'wget', 'python-requests', 'httpclient', 'scrapy',
+  'telegrambot', 'slackbot', 'discordbot',
+  'googlebot', 'bingbot', 'yandexbot', 'baiduspider', 'duckduckbot',
+  'curl', 'wget', 'python-requests', 'scrapy',
   'headless', 'selenium', 'puppeteer', 'playwright', 'phantomjs',
-  'ahrefs', 'semrush', 'moz', 'mj12bot', 'dotbot', 'petalbot',
+  'ahrefsbot', 'semrushbot', 'mj12bot', 'dotbot', 'petalbot',
   'applebot', 'bytespider', 'sogou', 'exabot', 'facebot',
-  'skypeuripreview', 'viber', 'line-poker'
+  'skypeuripreview', 'viber', 'line-poker', 'crawler', 'spider'
 ];
+
+// Debug log (last 50 requests)
+const requestLog = [];
+function logRequest(slug, ip, ua, isBlocked, reason) {
+  requestLog.unshift({ time: new Date().toISOString(), slug, ip, ua: ua.slice(0, 120), isBlocked, reason });
+  if (requestLog.length > 50) requestLog.pop();
+  console.log(`[${isBlocked ? 'BLOCKED' : 'HUMAN'}] slug=${slug} ip=${ip} ua=${ua.slice(0, 80)}${reason ? ' reason=' + reason : ''}`);
+}
 
 function isBot(req) {
   const ua = (req.headers['user-agent'] || '').toLowerCase();
 
-  // No user-agent at all = bot (real browsers always send one)
-  if (!ua || ua.length < 3) return true;
+  // No user-agent at all = bot
+  if (!ua || ua.length < 3) return { blocked: true, reason: 'no_ua' };
 
   // Check against known bot signatures
-  if (BOT_SIGNATURES.some(sig => ua.includes(sig))) return true;
+  for (const sig of BOT_SIGNATURES) {
+    if (ua.includes(sig)) return { blocked: true, reason: 'bot_ua:' + sig };
+  }
 
   // Headless browser headers (definite bot)
-  if (req.headers['x-headless-chrome'] || req.headers['x-playwright'] || req.headers['x-puppeteer']) return true;
+  if (req.headers['x-headless-chrome']) return { blocked: true, reason: 'headless_header' };
+  if (req.headers['x-playwright']) return { blocked: true, reason: 'playwright_header' };
+  if (req.headers['x-puppeteer']) return { blocked: true, reason: 'puppeteer_header' };
 
-  return false;
+  return { blocked: false };
 }
 
 // ==================== HELPERS ====================
@@ -133,21 +144,29 @@ app.get('/api/links/:slug/analytics', async (req, res) => {
   });
 });
 
+// Debug endpoint — shows last 50 requests with their UA and block status
+app.get('/api/debug', (req, res) => {
+  res.json(requestLog);
+});
+
 // ==================== REDIRECT + TRACKING ====================
 
 app.get('/:slug', async (req, res) => {
   const link = await Link.findOne({ slug: req.params.slug });
   if (!link) return res.status(404).send('<h2 style="font-family:sans-serif;text-align:center;margin-top:100px;">Link not found</h2>');
 
-  // Block known bots only — real humans from SMS pass through
-  if (isBot(req)) {
+  const ip = getClientIP(req);
+  const ua = req.headers['user-agent'] || '';
+  const botCheck = isBot(req);
+
+  if (botCheck.blocked) {
+    logRequest(req.params.slug, ip, ua, true, botCheck.reason);
     Link.updateOne({ slug: req.params.slug }, { $inc: { botBlocks: 1 } }).catch(() => {});
     return res.redirect(link.destination);
   }
 
   // Real human click — track everything
-  const ip = getClientIP(req);
-  const ua = req.headers['user-agent'] || '';
+  logRequest(req.params.slug, ip, ua, false, null);
   const parsed = parser(ua);
   const loc = getLocation(ip);
 
