@@ -18,6 +18,7 @@ const linkSchema = new mongoose.Schema({
   destination: { type: String, required: true },
   createdAt: { type: Date, default: Date.now },
   clicks: { type: Number, default: 0 },
+  botBlocks: { type: Number, default: 0 },
   clickLog: [clickSchema]
 });
 
