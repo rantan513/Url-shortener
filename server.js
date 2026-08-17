@@ -21,33 +21,32 @@ mongoose.connect(MONGODB_URI)
   .then(() => console.log('MongoDB connected'))
   .catch(err => console.error('MongoDB error:', err));
 
-// ==================== BOT DETECTION ====================
-// These are social media preview crawlers, search bots, and automated tools
+// ==================== BOT DETECTION (POSITIVE ID ONLY) ====================
+// ONLY block requests that positively identify as bots/crawlers.
+// Do NOT block based on missing headers — mobile browsers from SMS often lack them.
+
 const BOT_SIGNATURES = [
-  'bot', 'crawler', 'spider', 'scrape', 'slurp',
+  'bot', 'crawler', 'spider', 'slurp',
   'facebookexternalhit', 'twitterbot', 'linkedinbot',
   'telegrambot', 'whatsapp', 'slackbot', 'discordbot',
-  'googlebot', 'bingbot', 'yandex', 'baidu', 'duckduckgo',
+  'googlebot', 'bingbot', 'yandex', 'baidu', 'duckduckbot',
   'curl', 'wget', 'python-requests', 'httpclient', 'scrapy',
   'headless', 'selenium', 'puppeteer', 'playwright', 'phantomjs',
   'ahrefs', 'semrush', 'moz', 'mj12bot', 'dotbot', 'petalbot',
-  'applebot', 'bytespider', 'sogou', 'exabot', 'facebot'
+  'applebot', 'bytespider', 'sogou', 'exabot', 'facebot',
+  'skypeuripreview', 'viber', 'line-poker'
 ];
 
 function isBot(req) {
   const ua = (req.headers['user-agent'] || '').toLowerCase();
 
+  // No user-agent at all = bot (real browsers always send one)
+  if (!ua || ua.length < 3) return true;
+
   // Check against known bot signatures
   if (BOT_SIGNATURES.some(sig => ua.includes(sig))) return true;
 
-  // No user-agent at all = bot
-  if (!ua || ua.length < 10) return true;
-
-  // Missing Accept-Language AND no cookies = strong bot signal
-  // (Real browsers always send Accept-Language)
-  if (!req.headers['accept-language'] && !req.headers['cookie']) return true;
-
-  // Headless browser headers
+  // Headless browser headers (definite bot)
   if (req.headers['x-headless-chrome'] || req.headers['x-playwright'] || req.headers['x-puppeteer']) return true;
 
   return false;
@@ -63,21 +62,15 @@ function getClientIP(req) {
 function getLocation(ip) {
   if (!ip) return { country: 'Unknown', state: 'Unknown', city: 'Unknown' };
 
-  // Handle private/local IPs
   if (ip === '127.0.0.1' || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) {
     return { country: 'Local', state: 'Local', city: 'Local' };
   }
-
-  // Handle IPv6 localhost
   if (ip === '::1' || ip === '::ffff:127.0.0.1') {
     return { country: 'Local', state: 'Local', city: 'Local' };
   }
 
-  // Convert IPv4-mapped IPv6 addresses
   let lookupIp = ip;
-  if (ip.startsWith('::ffff:')) {
-    lookupIp = ip.replace('::ffff:', '');
-  }
+  if (ip.startsWith('::ffff:')) lookupIp = ip.replace('::ffff:', '');
 
   const geo = geoip.lookup(lookupIp);
   if (!geo) return { country: 'Unknown', state: 'Unknown', city: 'Unknown' };
@@ -91,55 +84,38 @@ function getLocation(ip) {
 
 // ==================== API ROUTES ====================
 
-// Create a new short link
 app.post('/api/links', async (req, res) => {
   const { destination, name, customSlug } = req.body;
-
   if (!destination || !/^https?:\/\//.test(destination)) {
     return res.status(400).json({ error: 'Valid URL required (must start with http:// or https://)' });
   }
-
   const slug = customSlug?.trim() || nanoid(6);
-
   const exists = await Link.findOne({ slug });
   if (exists) return res.status(409).json({ error: 'Slug already taken. Try another one.' });
-
   const link = new Link({ slug, name: name?.trim() || '', destination });
   await link.save();
-
   res.json({ shortUrl: `${DOMAIN}/${slug}`, slug, name: link.name, destination });
 });
 
-// Get all links
 app.get('/api/links', async (req, res) => {
   const links = await Link.find().sort({ createdAt: -1 });
   res.json(links.map(l => ({
-    slug: l.slug,
-    name: l.name,
-    destination: l.destination,
-    clicks: l.clicks,
-    botBlocks: l.botBlocks,
-    createdAt: l.createdAt
+    slug: l.slug, name: l.name, destination: l.destination,
+    clicks: l.clicks, botBlocks: l.botBlocks, createdAt: l.createdAt
   })));
 });
 
-// Delete a link
 app.delete('/api/links/:slug', async (req, res) => {
   const result = await Link.deleteOne({ slug: req.params.slug });
   if (result.deletedCount === 0) return res.status(404).json({ error: 'Link not found' });
   res.json({ message: 'Link deleted' });
 });
 
-// Get analytics for a specific link
 app.get('/api/links/:slug/analytics', async (req, res) => {
   const link = await Link.findOne({ slug: req.params.slug });
   if (!link) return res.status(404).json({ error: 'Link not found' });
 
-  const deviceStats = {};
-  const browserStats = {};
-  const stateStats = {};
-  const cityStats = {};
-
+  const deviceStats = {}, browserStats = {}, stateStats = {}, cityStats = {};
   link.clickLog.forEach(c => {
     deviceStats[c.device] = (deviceStats[c.device] || 0) + 1;
     browserStats[c.browser] = (browserStats[c.browser] || 0) + 1;
@@ -148,33 +124,28 @@ app.get('/api/links/:slug/analytics', async (req, res) => {
   });
 
   res.json({
-    slug: link.slug,
-    name: link.name,
-    destination: link.destination,
-    totalClicks: link.clicks,
-    botBlocks: link.botBlocks,
-    deviceBreakdown: deviceStats,
-    browserBreakdown: browserStats,
+    slug: link.slug, name: link.name, destination: link.destination,
+    totalClicks: link.clicks, botBlocks: link.botBlocks,
+    deviceBreakdown: deviceStats, browserBreakdown: browserStats,
     topStates: Object.entries(stateStats).sort((a, b) => b[1] - a[1]).slice(0, 10),
     topCities: Object.entries(cityStats).sort((a, b) => b[1] - a[1]).slice(0, 10),
     recentClicks: link.clickLog.slice(-100).reverse()
   });
 });
 
-// ==================== REDIRECT + REAL HUMAN TRACKING ====================
+// ==================== REDIRECT + TRACKING ====================
 
 app.get('/:slug', async (req, res) => {
   const link = await Link.findOne({ slug: req.params.slug });
   if (!link) return res.status(404).send('<h2 style="font-family:sans-serif;text-align:center;margin-top:100px;">Link not found</h2>');
 
-  // Check if this is a bot / social media preview / crawler
+  // Block known bots only — real humans from SMS pass through
   if (isBot(req)) {
-    // Block the tracking but still redirect so the link works when shared
     Link.updateOne({ slug: req.params.slug }, { $inc: { botBlocks: 1 } }).catch(() => {});
     return res.redirect(link.destination);
   }
 
-  // This is a real human click — track it
+  // Real human click — track everything
   const ip = getClientIP(req);
   const ua = req.headers['user-agent'] || '';
   const parsed = parser(ua);
@@ -187,10 +158,7 @@ app.get('/:slug', async (req, res) => {
       $push: {
         clickLog: {
           $each: [{
-            ip,
-            country: loc.country,
-            state: loc.state,
-            city: loc.city,
+            ip, country: loc.country, state: loc.state, city: loc.city,
             device: parsed.device.type || 'desktop',
             browser: parsed.browser.name || 'Unknown',
             os: parsed.os.name || 'Unknown',
@@ -203,7 +171,6 @@ app.get('/:slug', async (req, res) => {
     }
   ).catch(() => {});
 
-  // Redirect immediately — zero delay
   return res.redirect(link.destination);
 });
 
