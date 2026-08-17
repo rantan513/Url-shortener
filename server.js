@@ -21,10 +21,7 @@ mongoose.connect(MONGODB_URI)
   .then(() => console.log('MongoDB connected'))
   .catch(err => console.error('MongoDB error:', err));
 
-// ==================== BOT DETECTION (FIXED) ====================
-// ONLY block requests with KNOWN bot user-agents.
-// Removed 'moz' (matches Mozilla in every browser) and 'bot' (too broad).
-
+// ==================== BOT DETECTION ====================
 const BOT_SIGNATURES = [
   'facebookexternalhit', 'twitterbot', 'linkedinbot',
   'telegrambot', 'slackbot', 'discordbot',
@@ -36,7 +33,6 @@ const BOT_SIGNATURES = [
   'skypeuripreview', 'viber', 'line-poker', 'crawler', 'spider'
 ];
 
-// Debug log (last 50 requests)
 const requestLog = [];
 function logRequest(slug, ip, ua, isBlocked, reason) {
   requestLog.unshift({ time: new Date().toISOString(), slug, ip, ua: ua.slice(0, 120), isBlocked, reason });
@@ -46,50 +42,84 @@ function logRequest(slug, ip, ua, isBlocked, reason) {
 
 function isBot(req) {
   const ua = (req.headers['user-agent'] || '').toLowerCase();
-
-  // No user-agent at all = bot
   if (!ua || ua.length < 3) return { blocked: true, reason: 'no_ua' };
-
-  // Check against known bot signatures
   for (const sig of BOT_SIGNATURES) {
     if (ua.includes(sig)) return { blocked: true, reason: 'bot_ua:' + sig };
   }
-
-  // Headless browser headers (definite bot)
-  if (req.headers['x-headless-chrome']) return { blocked: true, reason: 'headless_header' };
-  if (req.headers['x-playwright']) return { blocked: true, reason: 'playwright_header' };
-  if (req.headers['x-puppeteer']) return { blocked: true, reason: 'puppeteer_header' };
-
+  if (req.headers['x-headless-chrome']) return { blocked: true, reason: 'headless' };
+  if (req.headers['x-playwright']) return { blocked: true, reason: 'playwright' };
+  if (req.headers['x-puppeteer']) return { blocked: true, reason: 'puppeteer' };
   return { blocked: false };
 }
 
-// ==================== HELPERS ====================
+// ==================== IP & LOCATION (FIXED) ====================
 
-function getClientIP(req) {
+function isPrivateIP(ip) {
+  if (!ip) return true;
+  // IPv4 private ranges
+  if (ip === '127.0.0.1' || ip === 'localhost') return true;
+  if (ip.startsWith('10.')) return true;
+  if (ip.startsWith('192.168.')) return true;
+  // 172.16.0.0 to 172.31.255.255
+  if (ip.match(/^172\.(1[6-9]|2[0-9]|3[0-1])\./)) return true;
+  // IPv6 localhost
+  if (ip === '::1' || ip === '::ffff:127.0.0.1') return true;
+  if (ip.startsWith('fc') || ip.startsWith('fd')) return true; // IPv6 unique local
+  return false;
+}
+
+function extractClientIP(req) {
+  // Render and most proxies put the real client IP in X-Forwarded-For
+  // Format: client, proxy1, proxy2
   const forwarded = req.headers['x-forwarded-for'];
-  return forwarded ? forwarded.split(',')[0].trim() : req.socket.remoteAddress;
+  if (forwarded) {
+    // Take the FIRST IP (the real client), trim whitespace
+    const firstIp = forwarded.split(',')[0].trim();
+    if (firstIp && !isPrivateIP(firstIp)) return firstIp;
+
+    // If first is private, try to find a public one in the chain
+    const ips = forwarded.split(',').map(s => s.trim()).filter(ip => ip && !isPrivateIP(ip));
+    if (ips.length > 0) return ips[0];
+  }
+
+  // Fallback headers some platforms use
+  const cf = req.headers['cf-connecting-ip'];      // Cloudflare
+  const real = req.headers['x-real-ip'];           // Nginx
+  const forwardedHost = req.headers['x-forwarded-host'];
+
+  if (cf && !isPrivateIP(cf)) return cf;
+  if (real && !isPrivateIP(real)) return real;
+
+  // Last resort
+  const remote = req.socket.remoteAddress;
+  if (remote && remote.startsWith('::ffff:')) return remote.replace('::ffff:', '');
+  return remote || '0.0.0.0';
 }
 
 function getLocation(ip) {
-  if (!ip) return { country: 'Unknown', state: 'Unknown', city: 'Unknown' };
-
-  if (ip === '127.0.0.1' || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) {
-    return { country: 'Local', state: 'Local', city: 'Local' };
-  }
-  if (ip === '::1' || ip === '::ffff:127.0.0.1') {
+  if (!ip || ip === '0.0.0.0' || isPrivateIP(ip)) {
     return { country: 'Local', state: 'Local', city: 'Local' };
   }
 
+  // Strip IPv4-mapped IPv6 prefix
   let lookupIp = ip;
-  if (ip.startsWith('::ffff:')) lookupIp = ip.replace('::ffff:', '');
+  if (lookupIp.startsWith('::ffff:')) {
+    lookupIp = lookupIp.replace('::ffff:', '');
+  }
 
+  // geoip-lite lookup
   const geo = geoip.lookup(lookupIp);
-  if (!geo) return { country: 'Unknown', state: 'Unknown', city: 'Unknown' };
+
+  if (!geo) {
+    console.log(`GeoIP miss for IP: ${lookupIp}`);
+    return { country: 'Unknown', state: 'Unknown', city: 'Unknown' };
+  }
 
   return {
     country: geo.country || 'Unknown',
-    state: geo.region || 'Unknown',
-    city: geo.city || 'Unknown'
+    state: geo.region || geo.ll?.[0]?.toString() || 'Unknown',
+    city: geo.city || 'Unknown',
+    ll: geo.ll
   };
 }
 
@@ -130,8 +160,8 @@ app.get('/api/links/:slug/analytics', async (req, res) => {
   link.clickLog.forEach(c => {
     deviceStats[c.device] = (deviceStats[c.device] || 0) + 1;
     browserStats[c.browser] = (browserStats[c.browser] || 0) + 1;
-    if (c.state && c.state !== 'Unknown') stateStats[c.state] = (stateStats[c.state] || 0) + 1;
-    if (c.city && c.city !== 'Unknown') cityStats[c.city] = (cityStats[c.city] || 0) + 1;
+    if (c.state && c.state !== 'Unknown' && c.state !== 'Local') stateStats[c.state] = (stateStats[c.state] || 0) + 1;
+    if (c.city && c.city !== 'Unknown' && c.city !== 'Local') cityStats[c.city] = (cityStats[c.city] || 0) + 1;
   });
 
   res.json({
@@ -144,7 +174,7 @@ app.get('/api/links/:slug/analytics', async (req, res) => {
   });
 });
 
-// Debug endpoint — shows last 50 requests with their UA and block status
+// Debug endpoint
 app.get('/api/debug', (req, res) => {
   res.json(requestLog);
 });
@@ -155,7 +185,7 @@ app.get('/:slug', async (req, res) => {
   const link = await Link.findOne({ slug: req.params.slug });
   if (!link) return res.status(404).send('<h2 style="font-family:sans-serif;text-align:center;margin-top:100px;">Link not found</h2>');
 
-  const ip = getClientIP(req);
+  const ip = extractClientIP(req);
   const ua = req.headers['user-agent'] || '';
   const botCheck = isBot(req);
 
@@ -165,7 +195,6 @@ app.get('/:slug', async (req, res) => {
     return res.redirect(link.destination);
   }
 
-  // Real human click — track everything
   logRequest(req.params.slug, ip, ua, false, null);
   const parsed = parser(ua);
   const loc = getLocation(ip);
